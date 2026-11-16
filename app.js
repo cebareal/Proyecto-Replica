@@ -261,7 +261,7 @@ function viewDetail(id) {
       <div class="cal-head">
         <button data-action="prev-month" aria-label="Mes anterior">‹</button>
         <strong>${esc(fmtDate(m, { month: 'long', year: 'numeric' }))}</strong>
-        <button data-action="next-month" aria-label="Mes siguiente" ${m >= t.slice(0, 8) + '01' ? 'disabled' : ''}>›</button>
+        <button data-action="next-month" aria-label="Mes siguiente" ${m >= L.addMonths(t.slice(0, 8) + '01', 12) ? 'disabled' : ''}>›</button>
       </div>
       <div class="cal">${cells}</div>
       ${holList}

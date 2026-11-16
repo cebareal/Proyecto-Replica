@@ -84,6 +84,17 @@ function once(key, fn) {
 // ---------- festivos ----------
 const isDate = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
 
+// Algunos países traen el nombre local en inglés (p. ej. Paraguay, 1 de enero).
+// Se traduce al leer, así también arregla las listas ya guardadas en el teléfono.
+const EN_ES = {
+  "New Year's Day": 'Año Nuevo', 'Christmas Day': 'Navidad', 'Christmas Eve': 'Nochebuena',
+  'Good Friday': 'Viernes Santo', 'Maundy Thursday': 'Jueves Santo', 'Easter Sunday': 'Domingo de Pascua',
+  'Easter Monday': 'Lunes de Pascua', 'Labour Day': 'Día del Trabajo', "All Saints' Day": 'Día de Todos los Santos',
+  'Epiphany': 'Epifanía', 'Assumption Day': 'Asunción de la Virgen', 'Immaculate Conception': 'Inmaculada Concepción',
+  "New Year's Eve": 'Nochevieja',
+};
+const toSpanish = (name) => EN_ES[name] || name;
+
 function parseList(json) {
   if (!Array.isArray(json)) return null;
   return json
@@ -127,7 +138,9 @@ export function holidaysOf(year) {
   const { country, sub } = getRegion();
   const c = cached(country, year);
   if (!c) return [];
-  return c.list.filter((h) => !h.subs || (sub && h.subs.includes(sub)));
+  return c.list
+    .filter((h) => !h.subs || (sub && h.subs.includes(sub)))
+    .map((h) => ({ ...h, name: toSpanish(h.name) }));
 }
 
 // Festivo de un día (clave AAAA-MM-DD) o null. Si hay dos el mismo día, los une.

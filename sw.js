@@ -1,6 +1,6 @@
 // Service worker: guarda la app para que funcione sin conexión.
 // Con conexión siempre usa la última versión; VERSION solo renueva la caché sin conexión.
-const VERSION = 'hilo-v4';
+const VERSION = 'hilo-v5';
 const ASSETS = [
   './',
   './index.html',
