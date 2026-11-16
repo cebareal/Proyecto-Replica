@@ -1,5 +1,7 @@
 import * as db from './db.js';
 import * as L from './logic.js';
+import { cachedQuote, dailyQuote } from './quote.js';
+import * as W from './weather.js';
 
 const EXPORT_FORMAT = 'hilo';
 const EXPORT_VERSION = 1;
@@ -7,7 +9,7 @@ const COLORS = ['#2f7d6d', '#3b6fb6', '#7a4fb5', '#c2417a', '#d0532c', '#b8862a'
 const WD = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
 const WD_LONG = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
 
-const state = { habits: [], checks: new Map(), calMonth: null, calFor: null };
+const state = { habits: [], checks: new Map(), calMonth: null, calFor: null, citySearch: { q: '', results: [], error: '', busy: false } };
 const $app = document.getElementById('app');
 
 // ---------- utilidades ----------
@@ -67,6 +69,51 @@ async function toggle(id, date) {
 }
 
 // ---------- vistas ----------
+function quoteInner(q) {
+  const credit = q.lang === 'en'
+    ? `${q.source ? esc(q.source) + ' · ' : ''}vía ${q.link ? `<a href="${esc(q.link)}" target="_blank" rel="noopener">PositiveQuotation</a>` : 'PositiveQuotation'}`
+    : '';
+  return `<blockquote lang="${q.lang === 'en' ? 'en' : 'es'}">“${esc(q.text)}”</blockquote>
+    <figcaption class="small muted">— ${esc(q.author || 'Anónimo')}${credit ? `<br>${credit}` : ''}</figcaption>`;
+}
+
+// Pinta la frase guardada al instante y, si hace falta, pide la de hoy sin bloquear la pantalla.
+function refreshQuote(day) {
+  dailyQuote(day).then((q) => {
+    const el = document.getElementById('daily-quote');
+    if (el && el.dataset.day === day) el.innerHTML = quoteInner(q);
+  });
+}
+
+const OPEN_METEO = '<a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo.com</a>';
+const fmtTime = (ms) => new Intl.DateTimeFormat('es', { hour: '2-digit', minute: '2-digit' }).format(new Date(ms));
+
+// loading: true mientras se espera la primera respuesta (aún no hay nada guardado).
+function weatherInner(w, today, loading) {
+  const city = W.getCity();
+  if (!city) return '<a class="small" href="#/ajustes">🌤️ Elige tu ciudad en Ajustes para ver el tiempo aquí</a>';
+  const place = `<span class="small muted">${esc(city.name)}</span>`;
+  if (!w) return `<div class="row">${place}<span class="spacer"></span><span class="small muted">${loading ? 'Cargando el tiempo…' : 'Tiempo no disponible ahora'}</span></div>`;
+  const d = W.describe(w.code, w.isDay);
+  const fresh = w.day === today;
+  const details = fresh
+    ? [w.max !== null && w.min !== null ? `máx ${w.max}° · mín ${w.min}°` : '', w.rain !== null ? `lluvia ${w.rain} %` : ''].filter(Boolean).join(' · ')
+    : 'sin actualizar desde otro día';
+  return `<div class="row">
+      <span class="w-icon" aria-hidden="true">${d.icon}</span>
+      <div class="spacer"><strong class="w-temp">${w.temp} °C</strong> <span class="muted">${esc(d.label)}</span>
+        <div class="small muted">${esc(details)}</div></div>
+    </div>
+    <div class="small muted w-foot">${esc(city.name)} · ${fresh ? '' : 'sin conexión · '}${fmtTime(w.fetchedAt)} · Datos: ${OPEN_METEO}</div>`;
+}
+
+function refreshWeather(day) {
+  W.todayWeather(day).then((w) => {
+    const el = document.getElementById('weather');
+    if (el && el.dataset.day === day) el.innerHTML = weatherInner(w, day, false);
+  });
+}
+
 function viewToday() {
   const t = L.todayKey();
   const all = active();
@@ -117,6 +164,8 @@ function viewToday() {
 
   return `<h1>${esc(dateTitle.charAt(0).toUpperCase() + dateTitle.slice(1))}</h1>
     <p class="muted">Hoy</p>
+    <section class="weather card" id="weather" data-day="${t}" aria-label="Tiempo de hoy">${weatherInner(W.cachedWeather(), t, true)}</section>
+    <figure class="quote card" id="daily-quote" data-day="${t}" aria-label="Frase del día">${quoteInner(cachedQuote(t))}</figure>
     ${body}
     ${all.length ? '<a class="btn btn-primary fab" href="#/nuevo">＋ Nuevo hábito</a>' : ''}`;
 }
@@ -250,6 +299,8 @@ function viewSettings() {
   const theme = storage.get('hilo-theme') || 'auto';
   const arch = archived();
   const withReminder = active().filter((h) => h.reminder).length;
+  const city = W.getCity();
+  const cs = state.citySearch;
   return `<h1>Ajustes</h1>
     <h2>Recordatorios</h2>
     <div class="card list">
@@ -271,6 +322,20 @@ function viewSettings() {
           ${[['auto', 'Automático'], ['light', 'Claro'], ['dark', 'Oscuro']].map(([v, l]) => `<option value="${v}" ${v === theme ? 'selected' : ''}>${l}</option>`).join('')}
         </select>
       </label>
+    </div>
+    <h2>Tiempo</h2>
+    <div class="card list">
+      ${city ? `<p>Ciudad: <strong>${esc(city.name)}</strong> <span class="muted">${esc(city.region || '')}</span></p>` : '<p>Elige tu ciudad para ver el tiempo en Hoy.</p>'}
+      <form id="city-form" class="row" role="search">
+        <input class="spacer" type="search" name="city" maxlength="80" value="${esc(cs.q)}" placeholder="Busca tu ciudad" aria-label="Ciudad" autocomplete="off">
+        <button type="submit" class="btn" ${cs.busy ? 'disabled' : ''}>${cs.busy ? 'Buscando…' : 'Buscar'}</button>
+      </form>
+      ${cs.error ? `<p class="error">${esc(cs.error)}</p>` : ''}
+      ${cs.results.length ? `<ul class="habits">${cs.results.map((r, i) => `<li class="habit">
+          <span class="info"><span class="name">${esc(r.name)}</span><span class="sub">${esc(r.region)}</span></span>
+          <button data-action="pick-city" data-i="${i}">Elegir</button></li>`).join('')}</ul>` : ''}
+      ${city ? '<button data-action="clear-city">Quitar ciudad</button>' : ''}
+      <p class="small muted">Solo se envían a ${OPEN_METEO} el nombre que buscas y las coordenadas aproximadas de la ciudad. Se actualiza como mucho una vez por hora.</p>
     </div>
     <h2>Archivados (${arch.length})</h2>
     ${arch.length ? `<ul class="habits">${arch.map((h) => `<li class="habit" style="--c:${h.color}">
@@ -301,6 +366,10 @@ function render() {
     ajustes: () => viewSettings(),
   };
   $app.innerHTML = (views[r.name] || views.hoy)();
+  const q = document.getElementById('daily-quote');
+  if (q) refreshQuote(q.dataset.day);
+  const w = document.getElementById('weather');
+  if (w) refreshWeather(w.dataset.day);
   const tab = ['stats', 'ajustes'].includes(r.name) ? r.name : 'hoy';
   document.querySelectorAll('.tabs a').forEach((a) => {
     if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
@@ -351,6 +420,18 @@ function readForm(form) {
 }
 
 $app.addEventListener('submit', async (e) => {
+  if (e.target.id === 'city-form') {
+    e.preventDefault();
+    const cs = state.citySearch;
+    if (cs.busy) return;
+    cs.q = String(new FormData(e.target).get('city') || '').trim();
+    Object.assign(cs, { busy: true, error: '', results: [] });
+    render();
+    const r = await W.searchCity(cs.q);
+    Object.assign(cs, { busy: false, error: r.error || '', results: r.results || [] });
+    if (route().name === 'ajustes') render();
+    return;
+  }
   if (e.target.id !== 'habit-form') return;
   e.preventDefault();
   const form = e.target;
@@ -412,7 +493,18 @@ $app.addEventListener('click', async (e) => {
   if (!act || act.tagName === 'SELECT' || act.tagName === 'INPUT') return;
   const a = act.dataset.action;
 
-  if (a === 'prev-month' || a === 'next-month') {
+  if (a === 'pick-city') {
+    const c = state.citySearch.results[Number(act.dataset.i)];
+    if (!c) return;
+    W.setCity(c);
+    state.citySearch = { q: '', results: [], error: '', busy: false };
+    toast(`Ciudad: ${c.name}`);
+    render();
+  } else if (a === 'clear-city') {
+    W.clearCity();
+    toast('Ciudad quitada');
+    render();
+  } else if (a === 'prev-month' || a === 'next-month') {
     state.calMonth = L.addMonths(state.calMonth, a === 'prev-month' ? -1 : 1);
     render();
   } else if (a === 'archive') {
