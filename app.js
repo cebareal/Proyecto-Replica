@@ -2,6 +2,7 @@ import * as db from './db.js';
 import * as L from './logic.js';
 import { cachedQuote, dailyQuote } from './quote.js';
 import * as W from './weather.js';
+import * as H from './holidays.js';
 
 const EXPORT_FORMAT = 'hilo';
 const EXPORT_VERSION = 1;
@@ -163,7 +164,7 @@ function viewToday() {
   }
 
   return `<h1>${esc(dateTitle.charAt(0).toUpperCase() + dateTitle.slice(1))}</h1>
-    <p class="muted">Hoy</p>
+    ${(() => { const hol = H.holidayOn(t); return hol ? `<p class="holiday-today">🎉 Hoy es festivo: <strong>${esc(hol)}</strong></p>` : '<p class="muted">Hoy</p>'; })()}
     <section class="weather card" id="weather" data-day="${t}" aria-label="Tiempo de hoy">${weatherInner(W.cachedWeather(), t, true)}</section>
     <figure class="quote card" id="daily-quote" data-day="${t}" aria-label="Frase del día">${quoteInner(cachedQuote(t))}</figure>
     ${body}
@@ -236,11 +237,16 @@ function viewDetail(id) {
     const future = k > t;
     const done = s.has(k);
     const sched = L.scheduledOn(h, k) && k >= start;
-    const cls = ['day', sched ? 'sched' : '', done ? 'done' : '', inMonth ? '' : 'out', k === t ? 'today' : ''].join(' ');
-    const label = `${fmtDate(k, { weekday: 'long', day: 'numeric', month: 'long' })}${done ? ', hecho' : ''}`;
+    const hol = H.holidayOn(k);
+    const cls = ['day', sched ? 'sched' : '', done ? 'done' : '', inMonth ? '' : 'out', k === t ? 'today' : '', hol ? 'holiday' : ''].join(' ');
+    const label = `${fmtDate(k, { weekday: 'long', day: 'numeric', month: 'long' })}${hol ? `, festivo: ${hol}` : ''}${done ? ', hecho' : ''}`;
     cells += `<button class="${cls}" data-cal="${k}" ${future ? 'disabled' : ''} aria-pressed="${done}" aria-label="${esc(label)}">${Number(k.slice(8))}</button>`;
     k = L.addDays(k, 1);
   } while (k < nextMonth || L.iso(k) !== 1);
+  const monthHolidays = H.holidaysOf(Number(m.slice(0, 4))).filter((x) => x.date.slice(0, 7) === m.slice(0, 7));
+  const holList = monthHolidays.length
+    ? `<p class="small muted holiday-list"><span class="hdot" aria-hidden="true"></span>Festivos: ${monthHolidays.map((x) => `${Number(x.date.slice(8))} · ${esc(x.name)}`).join(', ')}</p>`
+    : '';
 
   return `<a class="back" href="#/hoy">‹ Hoy</a>
     <div style="--c:${h.color}">
@@ -258,6 +264,7 @@ function viewDetail(id) {
         <button data-action="next-month" aria-label="Mes siguiente" ${m >= t.slice(0, 8) + '01' ? 'disabled' : ''}>›</button>
       </div>
       <div class="cal">${cells}</div>
+      ${holList}
       <p class="small muted" style="margin-top:10px">Toca un día pasado para marcarlo o desmarcarlo.</p>
     </div>`;
 }
@@ -301,6 +308,11 @@ function viewSettings() {
   const withReminder = active().filter((h) => h.reminder).length;
   const city = W.getCity();
   const cs = state.citySearch;
+  const reg = H.getRegion();
+  const today = L.todayKey();
+  const year = Number(today.slice(0, 4));
+  const subs = H.subdivisions(year);
+  const upcoming = [...H.holidaysOf(year), ...H.holidaysOf(year + 1)].filter((x) => x.date >= today).slice(0, 4);
   return `<h1>Ajustes</h1>
     <h2>Recordatorios</h2>
     <div class="card list">
@@ -337,6 +349,26 @@ function viewSettings() {
       ${city ? '<button data-action="clear-city">Quitar ciudad</button>' : ''}
       <p class="small muted">Solo se envían a ${OPEN_METEO} el nombre que buscas y las coordenadas aproximadas de la ciudad. Se actualiza como mucho una vez por hora.</p>
     </div>
+    <h2>Festivos</h2>
+    <div class="card list">
+      <label>País
+        <select data-action="holiday-country">
+          ${[...new Set([reg.country, ...H.countries()])]
+            .map((cc) => [cc, H.countryName(cc)]).sort((a, b) => a[1].localeCompare(b[1], 'es'))
+            .map(([cc, name]) => `<option value="${cc}" ${cc === reg.country ? 'selected' : ''}>${esc(name)}</option>`).join('')}
+        </select>
+      </label>
+      ${subs.length ? `<label>Comunidad o región
+        <select data-action="holiday-sub">
+          <option value="">Solo festivos nacionales</option>
+          ${subs.map((s) => `<option value="${s}" ${s === reg.sub ? 'selected' : ''}>${esc(H.regionName(s))}</option>`).join('')}
+        </select>
+      </label>` : ''}
+      ${upcoming.length
+        ? `<div><p class="small muted" style="margin-bottom:4px">Próximos festivos</p>${upcoming.map((x) => `<div class="row small"><span>${esc(x.name)}</span><span class="spacer"></span><span class="muted">${esc(fmtDate(x.date, { weekday: 'short', day: 'numeric', month: 'short' }))}</span></div>`).join('')}</div>`
+        : '<p class="small muted">Sin datos de festivos todavía. Se descargan cuando hay conexión.</p>'}
+      <p class="small muted">Se marcan en Hoy y en el calendario de cada hábito; no cambian rachas ni porcentajes. Datos: <a href="https://nagerholidays.com/" target="_blank" rel="noopener">Nager.Date</a>.</p>
+    </div>
     <h2>Archivados (${arch.length})</h2>
     ${arch.length ? `<ul class="habits">${arch.map((h) => `<li class="habit" style="--c:${h.color}">
         <a class="info" href="#/habito/${h.id}"><span class="name">${title(h)}</span><span class="sub">${freqLabel(h)}</span></a>
@@ -370,9 +402,22 @@ function render() {
   if (q) refreshQuote(q.dataset.day);
   const w = document.getElementById('weather');
   if (w) refreshWeather(w.dataset.day);
+  refreshHolidays(r.name);
   const tab = ['stats', 'ajustes'].includes(r.name) ? r.name : 'hoy';
   document.querySelectorAll('.tabs a').forEach((a) => {
     if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  });
+}
+
+// Descarga en segundo plano los festivos que la pantalla necesita y repinta solo si llegan datos nuevos.
+function refreshHolidays(name) {
+  const year = Number(L.todayKey().slice(0, 4));
+  const jobs = [H.ensureYear(year)];
+  if (name === 'habito' && state.calMonth) jobs.push(H.ensureYear(Number(state.calMonth.slice(0, 4))));
+  if (name === 'ajustes') jobs.push(H.ensureYear(year + 1), H.ensureCountries());
+  Promise.all(jobs).then((changed) => {
+    const typing = document.activeElement && ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName);
+    if (changed.some(Boolean) && route().name === name && !typing) render();
   });
 }
 
@@ -462,6 +507,13 @@ $app.addEventListener('change', async (e) => {
     el.form.querySelectorAll('[data-for]').forEach((n) => { n.hidden = n.dataset.for !== el.value; });
   }
   if (el.dataset.action === 'theme') { storage.set('hilo-theme', el.value); applyTheme(); }
+  if (el.dataset.action === 'holiday-country') { H.setRegion(el.value, null); el.blur(); render(); }
+  if (el.dataset.action === 'holiday-sub') {
+    H.setRegion(H.getRegion().country, el.value || null);
+    el.blur();
+    toast(el.value ? `Festivos de ${H.regionName(el.value)}` : 'Solo festivos nacionales');
+    render();
+  }
   if (el.dataset.action === 'import-json' && el.files[0]) {
     try {
       const data = JSON.parse(await el.files[0].text());

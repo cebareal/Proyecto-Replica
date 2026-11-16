@@ -150,6 +150,15 @@ input[type="text"], input[type="number"], input[type="time"], select {
 .day.done { background: var(--c); color: #fff; border-color: var(--c); font-weight: 700; }
 .day.out { opacity: .35; }
 .day.today { outline: 2px solid var(--text); outline-offset: -2px; }
+.day { position: relative; }
+.day.holiday::after, .hdot {
+  content: ''; position: absolute; bottom: 4px; left: 50%; width: 5px; height: 5px; margin-left: -2.5px;
+  border-radius: 50%; background: var(--danger);
+}
+.day.done.holiday::after { background: #fff; }
+.hdot { position: static; display: inline-block; margin: 0 6px 1px 0; vertical-align: middle; }
+.holiday-list { margin-top: 10px; }
+.holiday-today { margin: 0 0 12px; }
 
 /* Tablas de estadísticas */
 .table-wrap { overflow-x: auto; }
